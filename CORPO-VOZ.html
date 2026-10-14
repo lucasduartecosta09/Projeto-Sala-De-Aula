@@ -1,0 +1,18 @@
+<section id="voz-widget" class="voz-widget" aria-label="Comando de voz">
+  <div class="voz-cabecalho">
+    <button id="btn-voz" type="button" aria-pressed="false">
+      🎙️ Iniciar voz
+    </button>
+
+    <span id="voz-indicador" class="voz-indicador" aria-hidden="true"></span>
+    <span id="voz-status" aria-live="polite">Microfone desligado</span>
+  </div>
+
+  <div class="voz-transcricao">
+    <span>Transcrição</span>
+    <output id="voz-texto" aria-live="polite">Aguardando fala…</output>
+  </div>
+</section>
+
+<script defer src="voz.js"></script>
+<script defer src="APP.js"></script>
