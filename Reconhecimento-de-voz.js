@@ -1,61 +1,160 @@
-"use strict";
+// ==========================================
+// RECONHECIMENTO DE VOZ
+// ==========================================
 
-// voz.js
-// Requer no HTML os elementos: #voz-widget, #btn-voz, #voz-status e #voz-texto.
-// Emite o evento "voz:comando" com { comando, transcricao } para o app.js.
+class VozController {
+  static suportado() {
+    return Boolean(
+      window.SpeechRecognition ||
+      window.webkitSpeechRecognition
+    );
+  }
 
-(() => {
-  const normalizar = (texto) => texto
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  constructor({ onStatus, onTranscript, onSpeech, onCommand }) {
+    const Recognition =
+      window.SpeechRecognition ||
+      window.webkitSpeechRecognition;
 
-  function identificarComando(texto) {
-    const frase = normalizar(texto);
-    const contem = (...termos) =>
-      termos.some((termo) => frase.includes(termo));
+    if (!Recognition) {
+      throw new Error("Reconhecimento de voz indisponível");
+    }
 
-    const desligar = contem(
-      "desligar", "desliga", "desativar", "desative",
-      "parar", "pare", "apagar", "apague"
+    this.reconhecimento = new Recognition();
+    this.reconhecimento.lang = "pt-BR";
+    this.reconhecimento.continuous = false;
+    this.reconhecimento.interimResults = true;
+
+    this.ativo = false;
+    this.onStatus = onStatus;
+    this.onTranscript = onTranscript;
+    this.onSpeech = onSpeech;
+    this.onCommand = onCommand;
+
+    this.reconhecimento.onstart = () => {
+      this.ativo = true;
+      this.onStatus("Ouvindo...");
+      this.onSpeech(true);
+    };
+
+    this.reconhecimento.onend = () => {
+      this.ativo = false;
+      this.onSpeech(false);
+      this.onStatus("Microfone desligado");
+    };
+
+    this.reconhecimento.onerror = (evento) => {
+      this.ativo = false;
+      this.onSpeech(false);
+      this.onStatus(`Erro no microfone: ${evento.error}`);
+    };
+
+    this.reconhecimento.onresult = (evento) => {
+      const resultados = Array.from(evento.results);
+
+      const texto = resultados
+        .map((resultado) => resultado[0].transcript)
+        .join(" ");
+
+      this.onTranscript(texto);
+
+      const finais = resultados.filter(
+        (resultado) => resultado.isFinal
+      );
+
+      if (!finais.length) return;
+
+      const falaFinal = finais
+        .map((resultado) => resultado[0].transcript)
+        .join(" ")
+        .trim();
+
+      const comando = VozController.identificarComando(falaFinal);
+
+      if (comando) {
+        this.onCommand(comando);
+        this.onStatus(`Comando recebido: ${falaFinal}`);
+      } else {
+        this.onStatus("Comando não reconhecido");
+      }
+    };
+  }
+
+  static identificarComando(texto) {
+    const frase = texto
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const palavras = frase.split(" ");
+
+    // Compara palavras inteiras: "ar" não será encontrado dentro de "ligar".
+    const tem = (...termos) => termos.some((termo) => {
+      if (termo.includes(" ")) {
+        return ` ${frase} `.includes(` ${termo} `);
+      }
+
+      return palavras.includes(termo);
+    });
+
+    const desligar = tem(
+      "desligar",
+      "desliga",
+      "desative",
+      "desativar",
+      "parar",
+      "pare",
+      "desabilitar"
     );
 
-    const ligar = contem(
-      "ligar", "liga", "ativar", "ative", "iniciar"
+    const ligar = tem(
+      "ligar",
+      "liga",
+      "ative",
+      "ativar",
+      "habilitar",
+      "iniciar"
     );
 
-    const historico = contem("historico", "csv", "registros");
+    const historico = tem(
+      "historico",
+      "historia",
+      "csv",
+      "registros"
+    );
+
+    const atualizacao = tem(
+      "atualizacao",
+      "atualizacoes",
+      "atualizar automaticamente",
+      "atualizacao automatica"
+    );
 
     const modoAutomatico =
-      contem("automatico", "automatica", "automacao") ||
-      (contem("modo") && contem("auto"));
-
-    const atualizacaoAutomatica =
-      contem("atualizacao", "atualizar automaticamente") &&
-      contem("automatica", "automaticamente", "auto");
+      tem("automatico", "automatica", "automacao") ||
+      (tem("modo") && tem("auto"));
 
     if (
       historico &&
-      contem("baixar", "baixa", "exportar", "exporte", "download")
+      tem("baixar", "baixa", "exportar", "exporte", "download")
     ) {
       return "baixar_historico";
     }
 
     if (
       historico &&
-      contem("limpar", "limpa", "apagar", "apague", "excluir", "remover")
+      tem("limpar", "limpa", "apagar", "apague", "excluir", "remover")
     ) {
       return "limpar_historico";
     }
 
-    if (atualizacaoAutomatica && desligar) {
+    if (atualizacao && desligar) {
       return "desligar_atualizacao";
     }
 
-    if (atualizacaoAutomatica && ligar) {
+    if (atualizacao && ligar) {
       return "ligar_atualizacao";
     }
 
@@ -67,147 +166,156 @@
       return "ligar_modo_auto";
     }
 
-    const ar = contem("ar", "condicionado", "climatizacao");
-    const luz = contem("luz", "luzes", "iluminacao");
+    const ar = tem("ar", "condicionado", "climatizacao");
+    const luz = tem("luz", "luzes", "iluminacao");
+
+    // Se a frase mencionar os dois dispositivos, não escolhe um por prioridade.
+    if (ar && luz) return null;
 
     if (desligar && ar) return "desligar_ar";
     if (desligar && luz) return "desligar_luz";
     if (ligar && ar) return "ligar_ar";
     if (ligar && luz) return "ligar_luz";
 
-    if (contem("simular", "simule", "simulacao", "nova deteccao")) {
+    if (tem("simular", "simule", "simulacao", "nova deteccao")) {
       return "simular";
     }
 
     return null;
   }
 
-  function iniciarVoz() {
-    const widget = document.getElementById("voz-widget");
-    const botao = document.getElementById("btn-voz");
-    const status = document.getElementById("voz-status");
-    const transcricao = document.getElementById("voz-texto");
+  iniciar() {
+    if (this.ativo) return;
 
-    if (!widget || !botao || !status || !transcricao) return;
-
-    const Reconhecimento =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
-
-    if (!Reconhecimento) {
-      botao.disabled = true;
-      status.textContent = "Reconhecimento de voz não suportado neste navegador";
-      return;
+    try {
+      this.reconhecimento.start();
+      this.onStatus("Solicitando microfone...");
+    } catch (erro) {
+      this.onStatus(`Não foi possível iniciar: ${erro.message}`);
     }
-
-    const reconhecimento = new Reconhecimento();
-    reconhecimento.lang = "pt-BR";
-    reconhecimento.continuous = false;
-    reconhecimento.interimResults = true;
-    reconhecimento.maxAlternatives = 1;
-
-    let ativo = false;
-
-    function atualizarBotao() {
-      botao.textContent = ativo ? "⏹ Parar voz" : "🎙️ Iniciar voz";
-      botao.setAttribute("aria-pressed", String(ativo));
-    }
-
-    reconhecimento.onstart = () => {
-      ativo = true;
-      status.textContent = "Ouvindo...";
-      atualizarBotao();
-    };
-
-    reconhecimento.onspeechstart = () => {
-      widget.classList.add("falando");
-    };
-
-    reconhecimento.onspeechend = () => {
-      widget.classList.remove("falando");
-    };
-
-    reconhecimento.onresult = (evento) => {
-      const resultados = Array.from(evento.results);
-      const textoAtual = resultados
-        .map((resultado) => resultado[0].transcript)
-        .join(" ")
-        .trim();
-
-      transcricao.textContent = textoAtual;
-
-      const finais = resultados.filter((resultado) => resultado.isFinal);
-      if (!finais.length) return;
-
-      const falaFinal = finais
-        .map((resultado) => resultado[0].transcript)
-        .join(" ")
-        .trim();
-
-      const comando = identificarComando(falaFinal);
-
-      if (!comando) {
-        status.textContent = "Comando não reconhecido";
-        return;
-      }
-
-      document.dispatchEvent(new CustomEvent("voz:comando", {
-        detail: {
-          comando,
-          transcricao: falaFinal
-        }
-      }));
-
-      status.textContent = `Comando recebido: ${falaFinal}`;
-    };
-
-    reconhecimento.onerror = (evento) => {
-      ativo = false;
-      widget.classList.remove("falando");
-      atualizarBotao();
-
-      const mensagens = {
-        "not-allowed": "Permissão do microfone negada",
-        "service-not-allowed": "Serviço de voz bloqueado pelo navegador",
-        "no-speech": "Nenhuma fala detectada",
-        "audio-capture": "Microfone não encontrado"
-      };
-
-      status.textContent =
-        mensagens[evento.error] || `Erro no reconhecimento: ${evento.error}`;
-    };
-
-    reconhecimento.onend = () => {
-      ativo = false;
-      widget.classList.remove("falando");
-      atualizarBotao();
-
-      if (status.textContent === "Ouvindo...") {
-        status.textContent = "Microfone desligado";
-      }
-    };
-
-    botao.addEventListener("click", () => {
-      if (ativo) {
-        reconhecimento.stop();
-        return;
-      }
-
-      transcricao.textContent = "";
-      status.textContent = "Solicitando microfone...";
-
-      try {
-        reconhecimento.start();
-      } catch (erro) {
-        status.textContent = `Não foi possível iniciar: ${erro.message}`;
-      }
-    });
-
-    atualizarBotao();
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", iniciarVoz, { once: true });
-  } else {
-    iniciarVoz();
+  parar() {
+    if (!this.ativo) return;
+
+    try {
+      this.reconhecimento.stop();
+    } catch (erro) {
+      this.onStatus(`Não foi possível parar: ${erro.message}`);
+    }
   }
-})();
+}
+
+// ==========================================
+// INTEGRAÇÃO DA VOZ COM O DASHBOARD
+// ==========================================
+
+function configurarVoz() {
+  const widget = $("voz-widget");
+  const botao = $("btn-voz");
+  const status = $("voz-status");
+  const transcricao = $("voz-texto");
+
+  if (!botao || !status || !transcricao) return;
+
+  if (!VozController.suportado()) {
+    botao.disabled = true;
+    status.textContent = "Voz não suportada neste navegador";
+    return;
+  }
+
+  controleVoz = new VozController({
+    onStatus(mensagem) {
+      status.textContent = mensagem;
+      botao.textContent = controleVoz.ativo
+        ? "⏹ Parar voz"
+        : "🎙️ Iniciar voz";
+
+      botao.setAttribute(
+        "aria-pressed",
+        String(controleVoz.ativo)
+      );
+    },
+
+    onTranscript(texto) {
+      transcricao.textContent = texto;
+    },
+
+    onSpeech(falando) {
+      if (widget) {
+        widget.classList.toggle("falando", falando);
+      }
+    },
+
+    onCommand(comando) {
+      const comandosManuais = [
+        "ligar_ar",
+        "desligar_ar",
+        "ligar_luz",
+        "desligar_luz"
+      ];
+
+      if (comandosManuais.includes(comando) && estado.modoAuto) {
+        mudarModoAuto(false, "comando de voz");
+      }
+
+      switch (comando) {
+        case "ligar_ar":
+          definir("arLigado", true, "comando de voz");
+          desenhar();
+          break;
+
+        case "desligar_ar":
+          definir("arLigado", false, "comando de voz");
+          desenhar();
+          break;
+
+        case "ligar_luz":
+          definir("luzLigada", true, "comando de voz");
+          desenhar();
+          break;
+
+        case "desligar_luz":
+          definir("luzLigada", false, "comando de voz");
+          desenhar();
+          break;
+
+        case "ligar_modo_auto":
+          mudarModoAuto(true, "comando de voz");
+          break;
+
+        case "desligar_modo_auto":
+          mudarModoAuto(false, "comando de voz");
+          break;
+
+        case "ligar_atualizacao":
+          mudarAtualizacaoAutomatica(true, "comando de voz");
+          break;
+
+        case "desligar_atualizacao":
+          mudarAtualizacaoAutomatica(false, "comando de voz");
+          break;
+
+        case "baixar_historico":
+          baixarCsv();
+          break;
+
+        case "limpar_historico":
+          limparHistorico();
+          break;
+
+        case "simular":
+          atualizarAgora();
+          break;
+      }
+    }
+  });
+
+  botao.addEventListener("click", () => {
+    if (controleVoz.ativo) {
+      controleVoz.parar();
+    } else {
+      controleVoz.iniciar();
+    }
+  });
+}
