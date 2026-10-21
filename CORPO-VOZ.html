@@ -1,18 +1,55 @@
-<section id="voz-widget" class="voz-widget" aria-label="Comando de voz">
-  <div class="voz-cabecalho">
-    <button id="btn-voz" type="button" aria-pressed="false">
-      🎙️ Iniciar voz
-    </button>
+<!-- ASSISTENTE DE VOZ -->
+<section id="voz-widget" class="voz-widget" aria-label="Assistente de voz" hidden>
+  <div class="voz-identidade">
+    <span class="voz-icone-principal" aria-hidden="true">
+      <svg class="ico"><use href="#i-mic"/></svg>
+      <span class="voz-status-dot" id="voz-status-dot"></span>
+    </span>
 
-    <span id="voz-indicador" class="voz-indicador" aria-hidden="true"></span>
-    <span id="voz-status" aria-live="polite">Microfone desligado</span>
+    <div class="voz-meta">
+      <span class="voz-rotulo-badge">Assistente de voz</span>
+      <span id="voz-status" class="voz-status-texto" aria-live="polite">
+        Pronto para ouvir
+      </span>
+    </div>
+
+    <div class="voz-ondas" id="voz-ondas" aria-hidden="true">
+      <span class="voz-barra"></span>
+      <span class="voz-barra"></span>
+      <span class="voz-barra"></span>
+      <span class="voz-barra"></span>
+    </div>
   </div>
 
-  <div class="voz-transcricao">
-    <span>Transcrição</span>
-    <output id="voz-texto" aria-live="polite">Aguardando fala…</output>
+  <div class="voz-transcricao-bloco">
+    <span class="voz-subrotulo">Último comando</span>
+    <output id="voz-texto" class="voz-transcricao-saida" aria-live="polite">
+      Nenhum comando recebido
+    </output>
   </div>
+
+  <button
+    id="btn-voz"
+    class="btn-voz-interativo"
+    type="button"
+    aria-pressed="false"
+  >
+    <svg class="ico ico-mic" id="ico-voz-estado" aria-hidden="true">
+      <use href="#i-mic"/>
+    </svg>
+    <span id="btn-voz-texto">Iniciar voz</span>
+  </button>
 </section>
 
-<script defer src="voz.js"></script>
-<script defer src="APP.js"></script>
+<button
+  id="btn-toggle-voz"
+  class="btn-toggle-voz"
+  type="button"
+  aria-controls="voz-widget"
+  aria-expanded="false"
+  aria-label="Abrir assistente de voz"
+  title="Assistente de voz"
+>
+  <svg class="ico" aria-hidden="true"><use href="#i-mic"/></svg>
+  <span class="sr-only">Abrir assistente de voz</span>
+</button>
