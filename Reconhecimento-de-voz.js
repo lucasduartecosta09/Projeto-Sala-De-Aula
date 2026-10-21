@@ -1,22 +1,15 @@
-// ==========================================
-// RECONHECIMENTO DE VOZ
-// ==========================================
+let controleVoz = null;
 
 class VozController {
   static suportado() {
-    return Boolean(
-      window.SpeechRecognition ||
-      window.webkitSpeechRecognition
-    );
+    return Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
   }
 
-  constructor({ onStatus, onTranscript, onSpeech, onCommand }) {
-    const Recognition =
-      window.SpeechRecognition ||
-      window.webkitSpeechRecognition;
+  constructor({ onStatus, onTranscript, onSpeech, onCommand } = {}) {
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (!Recognition) {
-      throw new Error("Reconhecimento de voz indisponível");
+      throw new Error("Reconhecimento de voz não suportado neste navegador.");
     }
 
     this.reconhecimento = new Recognition();
@@ -25,54 +18,63 @@ class VozController {
     this.reconhecimento.interimResults = true;
 
     this.ativo = false;
-    this.onStatus = onStatus;
-    this.onTranscript = onTranscript;
-    this.onSpeech = onSpeech;
-    this.onCommand = onCommand;
+    this.iniciando = false;
+    this.preservarStatusNoFim = false;
+    this.onStatus = onStatus || (() => {});
+    this.onTranscript = onTranscript || (() => {});
+    this.onSpeech = onSpeech || (() => {});
+    this.onCommand = onCommand || (() => {});
 
     this.reconhecimento.onstart = () => {
+      this.iniciando = false;
       this.ativo = true;
       this.onStatus("Ouvindo...");
       this.onSpeech(true);
     };
 
     this.reconhecimento.onend = () => {
+      this.iniciando = false;
       this.ativo = false;
       this.onSpeech(false);
-      this.onStatus("Microfone desligado");
+      this.onStatus(this.preservarStatusNoFim ? null : "Pronto para ouvir");
     };
 
     this.reconhecimento.onerror = (evento) => {
+      this.iniciando = false;
       this.ativo = false;
+      this.preservarStatusNoFim = true;
       this.onSpeech(false);
       this.onStatus(`Erro no microfone: ${evento.error}`);
     };
 
     this.reconhecimento.onresult = (evento) => {
       const resultados = Array.from(evento.results);
-
       const texto = resultados
         .map((resultado) => resultado[0].transcript)
         .join(" ");
 
       this.onTranscript(texto);
 
-      const finais = resultados.filter(
-        (resultado) => resultado.isFinal
-      );
+      const inicio = Number.isInteger(evento.resultIndex)
+        ? evento.resultIndex
+        : 0;
+
+      const finais = resultados
+        .slice(inicio)
+        .filter((resultado) => resultado.isFinal);
 
       if (!finais.length) return;
 
       const falaFinal = finais
         .map((resultado) => resultado[0].transcript)
-        .join(" ")
-        .trim();
+        .join(" ");
 
       const comando = VozController.identificarComando(falaFinal);
+      this.preservarStatusNoFim = true;
 
       if (comando) {
         this.onCommand(comando);
-        this.onStatus(`Comando recebido: ${falaFinal}`);
+        this.onStatus(`Comando recebido: ${falaFinal.trim()}`);
       } else {
         this.onStatus("Comando não reconhecido");
       }
@@ -88,43 +90,22 @@ class VozController {
       .replace(/\s+/g, " ")
       .trim();
 
-    const palavras = frase.split(" ");
-
-    // Compara palavras inteiras: "ar" não será encontrado dentro de "ligar".
-    const tem = (...termos) => termos.some((termo) => {
-      if (termo.includes(" ")) {
-        return ` ${frase} `.includes(` ${termo} `);
-      }
-
-      return palavras.includes(termo);
-    });
+    const fraseDelimitada = ` ${frase} `;
+    const tem = (...termos) => termos.some(
+      (termo) => fraseDelimitada.includes(` ${termo} `)
+    );
 
     const desligar = tem(
-      "desligar",
-      "desliga",
-      "desative",
-      "desativar",
-      "parar",
-      "pare",
-      "desabilitar"
+      "desligar", "desliga", "desligue", "desative", "desativar",
+      "apagar", "apaga", "apague", "parar", "pare", "desabilitar"
     );
 
     const ligar = tem(
-      "ligar",
-      "liga",
-      "ative",
-      "ativar",
-      "habilitar",
-      "iniciar"
+      "ligar", "liga", "ligue", "ative", "ativar", "acender",
+      "acenda", "acende", "habilitar", "iniciar"
     );
 
-    const historico = tem(
-      "historico",
-      "historia",
-      "csv",
-      "registros"
-    );
-
+    const historico = tem("historico", "historia", "csv", "registros");
     const atualizacao = tem(
       "atualizacao",
       "atualizacoes",
@@ -132,45 +113,53 @@ class VozController {
       "atualizacao automatica"
     );
 
-    const modoAutomatico =
-      tem("automatico", "automatica", "automacao") ||
-      (tem("modo") && tem("auto"));
+    const modoAutomatico = tem(
+      "automatico",
+      "automatica",
+      "automacao"
+    ) || (tem("modo") && tem("auto"));
 
-    if (
-      historico &&
-      tem("baixar", "baixa", "exportar", "exporte", "download")
-    ) {
+    if (tem("nao", "nunca") && (ligar || desligar)) return null;
+
+    if (historico && tem("baixar", "baixa", "exportar", "exporte", "download")) {
       return "baixar_historico";
     }
 
-    if (
-      historico &&
-      tem("limpar", "limpa", "apagar", "apague", "excluir", "remover")
-    ) {
+    if (historico && tem("limpar", "limpa", "apagar", "apague", "excluir", "remover")) {
       return "limpar_historico";
     }
 
-    if (atualizacao && desligar) {
-      return "desligar_atualizacao";
+    if (atualizacao && desligar) return "desligar_atualizacao";
+    if (atualizacao && ligar) return "ligar_atualizacao";
+
+    if (modoAutomatico && desligar) return "desligar_modo_auto";
+    if (modoAutomatico && ligar) return "ligar_modo_auto";
+
+    if (desligar && tem("tudo", "todos", "equipamentos")) {
+      return "desligar_tudo";
     }
 
-    if (atualizacao && ligar) {
-      return "ligar_atualizacao";
-    }
+    const ar = tem(
+      "ar",
+      "condicionado",
+      "climatizacao",
+      "climatizador",
+      "ar-condicionado",
+      "arcondicionado"
+    );
 
-    if (modoAutomatico && desligar) {
-      return "desligar_modo_auto";
-    }
-
-    if (modoAutomatico && ligar) {
-      return "ligar_modo_auto";
-    }
-
-    const ar = tem("ar", "condicionado", "climatizacao");
-    const luz = tem("luz", "luzes", "iluminacao");
-
-    // Se a frase mencionar os dois dispositivos, não escolhe um por prioridade.
-    if (ar && luz) return null;
+    const luz = tem(
+      "luz",
+      "luzes",
+      "iluminacao",
+      "liz",
+      "lis",
+      "luiz",
+      "lampada",
+      "lampadas",
+      "led",
+      "leds"
+    );
 
     if (desligar && ar) return "desligar_ar";
     if (desligar && luz) return "desligar_luz";
@@ -185,18 +174,23 @@ class VozController {
   }
 
   iniciar() {
-    if (this.ativo) return;
+    if (this.ativo || this.iniciando) return;
+
+    this.iniciando = true;
+    this.preservarStatusNoFim = false;
 
     try {
-      this.reconhecimento.start();
       this.onStatus("Solicitando microfone...");
+      this.reconhecimento.start();
     } catch (erro) {
+      this.iniciando = false;
+      this.preservarStatusNoFim = true;
       this.onStatus(`Não foi possível iniciar: ${erro.message}`);
     }
   }
 
   parar() {
-    if (!this.ativo) return;
+    if (!this.ativo && !this.iniciando) return;
 
     try {
       this.reconhecimento.stop();
@@ -206,17 +200,36 @@ class VozController {
   }
 }
 
-// ==========================================
-// INTEGRAÇÃO DA VOZ COM O DASHBOARD
-// ==========================================
-
 function configurarVoz() {
   const widget = $("voz-widget");
+  const botaoToggle = $("btn-toggle-voz");
   const botao = $("btn-voz");
   const status = $("voz-status");
   const transcricao = $("voz-texto");
+  const botaoTexto = $("btn-voz-texto");
+  const icoEstado = $("ico-voz-estado");
+  const statusDot = $("voz-status-dot");
 
-  if (!botao || !status || !transcricao) return;
+  if (!widget || !botaoToggle || !botao || !status || !transcricao) return;
+
+  const alternarPainelVoz = (aberto) => {
+    widget.hidden = !aberto;
+    botaoToggle.setAttribute("aria-expanded", String(aberto));
+    botaoToggle.setAttribute(
+      "aria-label",
+      aberto ? "Ocultar assistente de voz" : "Abrir assistente de voz"
+    );
+
+    botaoToggle.title = aberto
+      ? "Ocultar assistente de voz"
+      : "Assistente de voz";
+
+    if (!aberto && controleVoz) controleVoz.parar();
+  };
+
+  botaoToggle.addEventListener("click", () => {
+    alternarPainelVoz(widget.hidden);
+  });
 
   if (!VozController.suportado()) {
     botao.disabled = true;
@@ -226,15 +239,34 @@ function configurarVoz() {
 
   controleVoz = new VozController({
     onStatus(mensagem) {
-      status.textContent = mensagem;
-      botao.textContent = controleVoz.ativo
-        ? "⏹ Parar voz"
-        : "🎙️ Iniciar voz";
+      if (mensagem) status.textContent = mensagem;
 
-      botao.setAttribute(
-        "aria-pressed",
-        String(controleVoz.ativo)
-      );
+      const iniciando = controleVoz.iniciando;
+      const ativo = controleVoz.ativo;
+
+      botao.disabled = iniciando;
+
+      if (botaoTexto) {
+        botaoTexto.textContent = iniciando
+          ? "Solicitando..."
+          : ativo
+            ? "Ouvindo... (clique para parar)"
+            : "Iniciar comando de voz";
+      }
+
+      if (icoEstado) {
+        icoEstado.querySelector("use").setAttribute(
+          "href",
+          ativo ? "#i-stop" : "#i-mic"
+        );
+      }
+
+      if (statusDot) {
+        statusDot.className = `voz-status-dot ${ativo ? "ativo" : ""}`;
+      }
+
+      botao.classList.toggle("ativo", ativo);
+      botao.setAttribute("aria-pressed", String(ativo));
     },
 
     onTranscript(texto) {
@@ -242,9 +274,7 @@ function configurarVoz() {
     },
 
     onSpeech(falando) {
-      if (widget) {
-        widget.classList.toggle("falando", falando);
-      }
+      widget.classList.toggle("falando", falando);
     },
 
     onCommand(comando) {
@@ -296,8 +326,12 @@ function configurarVoz() {
           mudarAtualizacaoAutomatica(false, "comando de voz");
           break;
 
+        case "desligar_tudo":
+          desligarTudo();
+          break;
+
         case "baixar_historico":
-          baixarCsv();
+          baixarHistoricoExcel();
           break;
 
         case "limpar_historico":
